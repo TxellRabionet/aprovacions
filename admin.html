@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="ca">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Panell d'aprovacions</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<style>
+  .wrap { max-width: 760px; }
+  .linkbox { display: flex; gap: 8px; align-items: center; margin-top: 10px; }
+  .linkbox input { font-size: 13px; color: var(--muted); }
+  .admin-post { margin-bottom: 12px; }
+  .admin-post .top { display: flex; gap: 14px; }
+  .actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- Login -->
+  <section id="vLogin" class="hidden" style="max-width:380px;margin:8vh auto 0">
+    <h1>Panell d'aprovacions</h1>
+    <p class="muted small" id="loginHint">Entra amb el teu correu i contrasenya.</p>
+    <form id="fLogin" class="card">
+      <label for="em">Correu</label><input id="em" type="email" autocomplete="email" required>
+      <label for="pw">Contrasenya</label><input id="pw" type="password" autocomplete="current-password" minlength="8" required>
+      <div class="error hidden" id="lErr"></div>
+      <button class="btn-primary" style="width:100%;margin-top:16px" id="lBtn">Entrar</button>
+      <button type="button" class="btn-ghost btn-sm" style="width:100%;margin-top:6px" id="lToggle">Primer cop? Crea el teu compte</button>
+    </form>
+  </section>
+
+  <!-- Panell -->
+  <section id="vMain" class="hidden">
+    <div class="head">
+      <div><h1>Panell d'aprovacions</h1><div class="muted small">Puja el contingut i envia l'enllaç al client</div></div>
+      <button class="btn-ghost btn-sm" id="out">Sortir</button>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <label for="cSel" style="margin-top:0">Client</label>
+      <div class="row" style="flex-wrap:nowrap">
+        <select id="cSel"></select>
+        <button class="btn-sm" id="cNewBtn" style="white-space:nowrap">+ Nou client</button>
+      </div>
+      <form id="fClient" class="row hidden" style="margin-top:10px;flex-wrap:nowrap">
+        <input id="cName" placeholder="Nom del client" required>
+        <button class="btn-primary btn-sm">Crear</button>
+      </form>
+      <div id="cInfo"></div>
+    </div>
+
+    <div id="stats"></div>
+
+    <div class="row" style="margin:20px 0 12px;justify-content:space-between">
+      <h2 style="margin:0">Publicacions</h2>
+      <button class="btn-primary btn-sm" id="pNewBtn">+ Nova publicació</button>
+    </div>
+
+    <form id="fPost" class="card hidden" style="margin-bottom:16px">
+      <h3 id="fTitle">Nova publicació</h3>
+      <div class="grid2">
+        <div><label for="pDate">Data de publicació</label><input id="pDate" type="date" required></div>
+        <div><label for="pTitle">Títol (opcional)</label><input id="pTitle" placeholder="Publicació 01"></div>
+        <div><label for="pNet">Xarxa</label>
+          <select id="pNet"><option>Instagram</option><option>Facebook</option><option>TikTok</option><option>LinkedIn</option><option>Instagram + Facebook</option></select></div>
+        <div><label for="pFmt">Format</label>
+          <select id="pFmt"><option>Reel</option><option>Carrusel</option><option>Imatge</option><option>Story</option><option>Vídeo</option></select></div>
+      </div>
+      <label for="pCap">Text de la publicació</label>
+      <textarea id="pCap" rows="6" placeholder="Copy, hashtags…"></textarea>
+      <label>Fotos i vídeos (en l'ordre en què es veuran)</label>
+      <div class="drop" id="drop">Arrossega aquí els fitxers o <u>tria'ls</u><br><span class="small">JPG, PNG, WEBP, MP4 o MOV · màx. 50 MB cadascun</span></div>
+      <input type="file" id="pFiles" multiple accept="image/jpeg,image/png,image/webp,video/mp4,video/quicktime,.mov" class="hidden">
+      <div class="files" id="fileList"></div>
+      <label class="row hidden" id="reWrap" style="font-weight:500;color:var(--text)"><input type="checkbox" id="pReset" checked style="width:auto"> Tornar a enviar a revisió del client</label>
+      <div class="error hidden" id="pErr"></div>
+      <div class="muted small" id="pProg"></div>
+      <div class="row" style="margin-top:14px">
+        <button class="btn-primary" id="pSave">Desar publicació</button>
+        <button type="button" class="btn-ghost" id="pCancel">Cancel·lar</button>
+      </div>
+    </form>
+
+    <div id="posts"></div>
+  </section>
+</div>
+
+<script type="module">
+import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
+import { SUPABASE_URL, SUPABASE_KEY, BUCKET, MAX_MB, mediaUrl, esc, fmtDay, fmtStamp, STATUS } from './config.js';
+
+const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
+const $ = (id) => document.getElementById(id);
+let clients = [], clientId = null, posts = [], editing = null, newFiles = [], removeMedia = new Set(), signupMode = false;
+
+/* ---------- Login ---------- */
+$('lToggle').onclick = () => {
+  signupMode = !signupMode;
+  $('lBtn').textContent = signupMode ? 'Crear compte' : 'Entrar';
+  $('lToggle').textContent = signupMode ? 'Ja tinc compte' : 'Primer cop? Crea el teu compte';
+  $('loginHint').textContent = signupMode ? 'Crea el compte d\'administradora (mínim 8 caràcters).' : 'Entra amb el teu correu i contrasenya.';
+};
+$('fLogin').onsubmit = async (e) => {
+  e.preventDefault();
+  const email = $('em').value.trim(), password = $('pw').value;
+  $('lErr').classList.add('hidden'); $('lBtn').disabled = true;
+  const res = signupMode ? await sb.auth.signUp({ email, password }) : await sb.auth.signInWithPassword({ email, password });
+  $('lBtn').disabled = false;
+  if (res.error) { $('lErr').textContent = signupMode ? 'No s\'ha pogut crear el compte: ' + res.error.message : 'Correu o contrasenya incorrectes.'; $('lErr').classList.remove('hidden'); return; }
+  if (signupMode && !res.data.session) {
+    $('lErr').textContent = 'Compte creat. Mira el correu i confirma\'l, després torna aquí i entra.';
+    $('lErr').style.color = 'var(--ok)'; $('lErr').classList.remove('hidden'); $('lToggle').click(); return;
+  }
+  boot();
+};
+$('out').onclick = async () => { await sb.auth.signOut(); location.reload(); };
+
+async function boot() {
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) { $('vLogin').classList.remove('hidden'); $('vMain').classList.add('hidden'); return; }
+  const { data: isAdmin } = await sb.rpc('is_admin');
+  if (!isAdmin) {
+    $('vLogin').classList.remove('hidden');
+    $('lErr').textContent = 'Aquest compte no té permís d\'administració.'; $('lErr').classList.remove('hidden');
+    await sb.auth.signOut(); return;
+  }
+  $('vLogin').classList.add('hidden'); $('vMain').classList.remove('hidden');
+  await loadClients();
+}
+
+/* ---------- Clients ---------- */
+async function loadClients(selectId) {
+  const { data } = await sb.from('clients').select('*').order('name');
+  clients = data || [];
+  const saved = selectId || localStorage.getItem('aprov_client');
+  clientId = clients.find(c => c.id === saved)?.id || clients[0]?.id || null;
+  $('cSel').innerHTML = clients.length ? clients.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('') : '<option value="">— Crea el primer client —</option>';
+  if (clientId) $('cSel').value = clientId;
+  if (!clients.length) $('fClient').classList.remove('hidden');
+  await loadPosts();
+}
+$('cSel').onchange = () => { clientId = $('cSel').value; localStorage.setItem('aprov_client', clientId); closeEditor(); loadPosts(); };
+$('cNewBtn').onclick = () => { $('fClient').classList.toggle('hidden'); $('cName').focus(); };
+$('fClient').onsubmit = async (e) => {
+  e.preventDefault();
+  const name = $('cName').value.trim(); if (!name) return;
+  const { data, error } = await sb.from('clients').insert({ name }).select().single();
+  if (error) { alert('No s\'ha pogut crear el client.'); return; }
+  $('cName').value = ''; $('fClient').classList.add('hidden');
+  localStorage.setItem('aprov_client', data.id);
+  await loadClients(data.id);
+};
+
+function renderClientInfo() {
+  const c = clients.find(x => x.id === clientId);
+  if (!c) { $('cInfo').innerHTML = ''; $('pNewBtn').classList.add('hidden'); return; }
+  $('pNewBtn').classList.remove('hidden');
+  const link = new URL('./?c=' + c.token, location.href).href;
+  const wa = 'https://wa.me/?text=' + encodeURIComponent(`Hola! Aquí tens el contingut per revisar. Pots aprovar-lo o demanar canvis directament des d'aquest enllaç: ${link}`);
+  $('cInfo').innerHTML = `
+    <label>Enllaç per al client (sense registre)</label>
+    <div class="linkbox"><input readonly value="${esc(link)}" id="lnk">
+      <button class="btn-sm" id="cp">Copiar</button></div>
+    <div class="row" style="margin-top:8px">
+      <a class="btn btn-sm" href="${esc(wa)}" target="_blank" rel="noopener">Enviar per WhatsApp</a>
+      <a class="btn btn-sm" href="${esc(link)}" target="_blank" rel="noopener">Veure com el client</a>
+      <button class="btn-ghost btn-sm btn-danger" id="cDel">Esborrar client</button>
+    </div>`;
+  $('cp').onclick = async () => { try { await navigator.clipboard.writeText(link); } catch { $('lnk').select(); document.execCommand('copy'); } $('cp').textContent = 'Copiat ✓'; setTimeout(() => $('cp').textContent = 'Copiar', 1500); };
+  $('cDel').onclick = async () => {
+    if (!confirm(`Segur que vols esborrar "${c.name}" i totes les seves publicacions?`)) return;
+    const { data: ms } = await sb.from('media').select('path, posts!inner(client_id)').eq('posts.client_id', c.id);
+    if (ms?.length) await sb.storage.from(BUCKET).remove(ms.map(m => m.path));
+    await sb.from('clients').delete().eq('id', c.id);
+    localStorage.removeItem('aprov_client'); loadClients();
+  };
+}
+
+/* ---------- Publicacions ---------- */
+async function loadPosts() {
+  renderClientInfo();
+  if (!clientId) { posts = []; renderPosts(); return; }
+  const { data } = await sb.from('posts')
+    .select('*, media(id, path, kind, position), comments(id, author, body, created_at)')
+    .eq('client_id', clientId).order('publish_date').order('created_at');
+  posts = (data || []).map(p => ({ ...p,
+    media: (p.media || []).sort((a, b) => a.position - b.position),
+    comments: (p.comments || []).sort((a, b) => a.created_at.localeCompare(b.created_at)) }));
+  renderPosts();
+}
+
+function renderPosts() {
+  const n = posts.length, pend = posts.filter(p => p.status === 'pendent').length,
+        ok = posts.filter(p => p.status === 'aprovada').length, ch = posts.filter(p => p.status === 'canvis').length;
+  $('stats').innerHTML = clientId ? `<div class="stats" style="grid-template-columns:repeat(4,1fr)">
+    <div class="stat"><b>${n}</b><span>Publicacions</span></div>
+    <div class="stat"><b>${pend}</b><span>Pendents</span></div>
+    <div class="stat"><b style="color:var(--warn)">${ch}</b><span>Amb canvis</span></div>
+    <div class="stat"><b style="color:var(--ok)">${ok}</b><span>Aprovades</span></div></div>` : '';
+  if (!clientId) { $('posts').innerHTML = ''; return; }
+  if (!n) { $('posts').innerHTML = `<div class="card center muted">Encara no hi ha publicacions. Crea la primera amb «+ Nova publicació».</div>`; return; }
+  $('posts').innerHTML = posts.map((p, i) => {
+    const st = STATUS[p.status], m = p.media[0];
+    const th = !m ? '<div class="thumb"></div>' : `<div class="thumb">${m.kind === 'video'
+      ? `<video src="${mediaUrl(m.path)}#t=0.5" preload="metadata" muted playsinline></video>`
+      : `<img src="${mediaUrl(m.path)}" alt="" loading="lazy">`}${p.media.length > 1 ? `<span class="badge">${p.media.length}</span>` : ''}</div>`;
+    const cms = p.comments.map(c => `<div class="bubble ${c.author}"><span class="who">${c.author === 'client' ? 'Client' : 'Tu'} · ${esc(fmtStamp(c.created_at))}</span>${esc(c.body)}</div>`).join('');
+    return `<div class="card admin-post">
+      <div class="top">${th}
+        <div style="min-width:0;flex:1">
+          <div class="muted small">${esc(fmtDay(p.publish_date))}</div>
+          <h3>${esc(p.title?.trim() || `Publicació ${String(i + 1).padStart(2, '0')}`)}</h3>
+          <span class="pill ${st.cls}" style="margin-top:6px">${st.label}</span>
+          <div class="muted small" style="margin-top:4px">${esc(p.network)} · ${esc(p.format)}</div>
+          <div class="excerpt small" style="margin-top:4px">${esc(p.caption || '')}</div>
+        </div>
+      </div>
+      ${cms}
+      <div class="row hidden" id="rep-${p.id}" style="margin-top:8px;flex-wrap:nowrap">
+        <input placeholder="Respon al client…" id="repIn-${p.id}"><button class="btn-sm btn-primary" data-send="${p.id}">Enviar</button>
+      </div>
+      <div class="actions">
+        <button class="btn-sm" data-edit="${p.id}">Editar</button>
+        <button class="btn-sm" data-reply="${p.id}">Respondre</button>
+        ${p.status !== 'pendent' ? `<button class="btn-sm" data-pend="${p.id}">Tornar a pendent</button>` : ''}
+        <button class="btn-sm btn-ghost btn-danger" data-del="${p.id}">Esborrar</button>
+      </div>
+    </div>`;
+  }).join('');
+
+  $('posts').querySelectorAll('[data-edit]').forEach(b => b.onclick = () => openEditor(posts.find(p => p.id === b.dataset.edit)));
+  $('posts').querySelectorAll('[data-reply]').forEach(b => b.onclick = () => { $('rep-' + b.dataset.reply).classList.toggle('hidden'); $('repIn-' + b.dataset.reply).focus(); });
+  $('posts').querySelectorAll('[data-send]').forEach(b => b.onclick = async () => {
+    const body = $('repIn-' + b.dataset.send).value.trim(); if (!body) return;
+    b.disabled = true;
+    await sb.from('comments').insert({ post_id: b.dataset.send, author: 'txell', body });
+    loadPosts();
+  });
+  $('posts').querySelectorAll('[data-pend]').forEach(b => b.onclick = async () => {
+    await sb.from('posts').update({ status: 'pendent' }).eq('id', b.dataset.pend); loadPosts();
+  });
+  $('posts').querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
+    const p = posts.find(x => x.id === b.dataset.del);
+    if (!confirm('Segur que vols esborrar aquesta publicació i els seus fitxers?')) return;
+    if (p.media.length) await sb.storage.from(BUCKET).remove(p.media.map(m => m.path));
+    await sb.from('posts').delete().eq('id', p.id);
+    loadPosts();
+  });
+}
+
+/* ---------- Editor ---------- */
+const tomorrow = () => { const d = new Date(); d.setDate(d.getDate() + 1); return d.toISOString().slice(0, 10); };
+function openEditor(p = null) {
+  editing = p; newFiles = []; removeMedia = new Set();
+  $('fTitle').textContent = p ? 'Editar publicació' : 'Nova publicació';
+  $('pDate').value = p?.publish_date || tomorrow();
+  $('pTitle').value = p?.title || '';
+  $('pNet').value = p?.network || 'Instagram';
+  $('pFmt').value = p?.format || 'Reel';
+  $('pCap').value = p?.caption || '';
+  $('reWrap').classList.toggle('hidden', !p || p.status === 'pendent');
+  $('pReset').checked = true;
+  $('pErr').classList.add('hidden'); $('pProg').textContent = '';
+  $('fPost').classList.remove('hidden');
+  renderFiles();
+  $('fPost').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+function closeEditor() { $('fPost').classList.add('hidden'); newFiles.forEach(f => URL.revokeObjectURL(f.url)); newFiles = []; editing = null; }
+$('pNewBtn').onclick = () => openEditor();
+$('pCancel').onclick = closeEditor;
+
+const kindOf = (f) => (f.type.startsWith('video') || /\.(mov|mp4)$/i.test(f.name)) ? 'video' : 'image';
+const okType = (f) => /^(image\/(jpeg|png|webp)|video\/(mp4|quicktime))$/.test(f.type) || /\.(jpe?g|png|webp|mp4|mov)$/i.test(f.name);
+function addFiles(list) {
+  const bad = [];
+  for (const f of list) {
+    if (!okType(f)) { bad.push(`${f.name}: format no admès`); continue; }
+    if (f.size > MAX_MB * 1024 * 1024) { bad.push(`${f.name}: pesa ${(f.size / 1048576).toFixed(0)} MB (màx. ${MAX_MB} MB)`); continue; }
+    newFiles.push({ file: f, url: URL.createObjectURL(f), kind: kindOf(f) });
+  }
+  $('pErr').textContent = bad.join(' · '); $('pErr').classList.toggle('hidden', !bad.length);
+  renderFiles();
+}
+function renderFiles() {
+  const existing = (editing?.media || []).filter(m => !removeMedia.has(m.id)).map(m => ({ id: m.id, url: mediaUrl(m.path), kind: m.kind, name: 'Ja pujat' }));
+  const fresh = newFiles.map((f, i) => ({ idx: i, url: f.url, kind: f.kind, name: f.file.name }));
+  $('fileList').innerHTML = [...existing, ...fresh].map(f => `<div class="file"><div class="ph">${f.kind === 'video'
+      ? `<video src="${f.url}#t=0.5" preload="metadata" muted playsinline></video>` : `<img src="${f.url}" alt="">`}</div>
+      <button type="button" class="x" ${f.id ? `data-rm="${f.id}"` : `data-rn="${f.idx}"`} aria-label="Treure">✕</button>
+      <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(f.name)}</div></div>`).join('');
+  $('fileList').querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { removeMedia.add(b.dataset.rm); renderFiles(); });
+  $('fileList').querySelectorAll('[data-rn]').forEach(b => b.onclick = () => { const [f] = newFiles.splice(+b.dataset.rn, 1); URL.revokeObjectURL(f.url); renderFiles(); });
+}
+const drop = $('drop');
+drop.onclick = () => $('pFiles').click();
+$('pFiles').onchange = (e) => { addFiles([...e.target.files]); e.target.value = ''; };
+['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
+['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); }));
+drop.addEventListener('drop', e => addFiles([...e.dataTransfer.files]));
+
+$('fPost').onsubmit = async (e) => {
+  e.preventDefault();
+  const fields = { client_id: clientId, publish_date: $('pDate').value, title: $('pTitle').value.trim() || null,
+                   network: $('pNet').value, format: $('pFmt').value, caption: $('pCap').value };
+  if (!fields.publish_date) { $('pErr').textContent = 'Posa la data de publicació.'; $('pErr').classList.remove('hidden'); return; }
+  $('pSave').disabled = true; $('pErr').classList.add('hidden');
+  try {
+    let postId;
+    if (editing) {
+      if (editing.status !== 'pendent' && $('pReset').checked) fields.status = 'pendent';
+      const { error } = await sb.from('posts').update(fields).eq('id', editing.id); if (error) throw error;
+      postId = editing.id;
+      const gone = editing.media.filter(m => removeMedia.has(m.id));
+      if (gone.length) {
+        await sb.storage.from(BUCKET).remove(gone.map(m => m.path));
+        await sb.from('media').delete().in('id', gone.map(m => m.id));
+      }
+    } else {
+      const { data, error } = await sb.from('posts').insert(fields).select('id').single(); if (error) throw error;
+      postId = data.id;
+    }
+    const kept = (editing?.media || []).filter(m => !removeMedia.has(m.id));
+    let pos = kept.length ? Math.max(...kept.map(m => m.position)) + 1 : 0;
+    for (let i = 0; i < newFiles.length; i++) {
+      const { file, kind } = newFiles[i];
+      $('pProg').textContent = `Pujant fitxer ${i + 1} de ${newFiles.length}… (${(file.size / 1048576).toFixed(1)} MB)`;
+      const ext = (file.name.split('.').pop() || (kind === 'video' ? 'mp4' : 'jpg')).toLowerCase();
+      const path = `${clientId}/${postId}/${Date.now()}-${i}.${ext}`;
+      const type = file.type || (ext === 'mov' ? 'video/quicktime' : ext === 'mp4' ? 'video/mp4' : 'image/jpeg');
+      const { error: upErr } = await sb.storage.from(BUCKET).upload(path, file, { contentType: type, upsert: false });
+      if (upErr) throw new Error(`No s'ha pogut pujar ${file.name}: ${upErr.message}`);
+      const { error: mErr } = await sb.from('media').insert({ post_id: postId, path, kind, position: pos++ }); if (mErr) throw mErr;
+    }
+    $('pProg').textContent = '';
+    closeEditor();
+    await loadPosts();
+  } catch (err) {
+    $('pErr').textContent = err.message || 'Hi ha hagut un error desant la publicació.'; $('pErr').classList.remove('hidden');
+    $('pProg').textContent = '';
+  } finally { $('pSave').disabled = false; }
+};
+
+boot();
+</script>
+</body>
+</html>

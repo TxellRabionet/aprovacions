@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="ca">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>El teu espai de continguts</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="wrap" id="app"><div class="center muted">Carregant…</div></div>
+
+<script type="module">
+import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
+import { SUPABASE_URL, SUPABASE_KEY, mediaUrl, esc, fmtDay, fmtMonth, fmtStamp, STATUS } from './config.js';
+
+const sb = createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: false } });
+const app = document.getElementById('app');
+const token = new URLSearchParams(location.search).get('c');
+let data = null;
+
+const thumbHtml = (p) => {
+  const m = p.media[0];
+  if (!m) return '<div class="thumb"></div>';
+  const inner = m.kind === 'video'
+    ? `<video src="${mediaUrl(m.path)}#t=0.5" preload="metadata" muted playsinline></video>`
+    : `<img src="${mediaUrl(m.path)}" alt="" loading="lazy">`;
+  const badge = p.media.length > 1 ? `<span class="badge">${p.media.length}</span>` : (m.kind === 'video' ? '<span class="badge">▶</span>' : '');
+  return `<div class="thumb">${inner}${badge}</div>`;
+};
+
+const titleOf = (p, i) => p.title?.trim() || `Publicació ${String(i + 1).padStart(2, '0')}`;
+
+function renderList() {
+  const posts = data.posts;
+  const pend = posts.filter(p => p.status === 'pendent').length;
+  const ok = posts.filter(p => p.status === 'aprovada').length;
+  let html = `
+    <div class="head">
+      <div><h1>El teu espai de continguts</h1><div class="muted small">${esc(data.client.name)}</div></div>
+      <span class="pill">Client</span>
+    </div>
+    <div class="stats">
+      <div class="stat"><b>${posts.length}</b><span>Publicacions</span></div>
+      <div class="stat"><b style="color:var(--warn)">${pend}</b><span>Pendents de revisar</span></div>
+      <div class="stat"><b style="color:var(--ok)">${ok}</b><span>Aprovades</span></div>
+    </div>`;
+  if (!posts.length) {
+    html += `<div class="card center muted" style="margin-top:20px">Encara no hi ha cap publicació per revisar.</div>`;
+  }
+  let month = '', day = '';
+  posts.forEach((p, i) => {
+    const mo = fmtMonth(p.publish_date);
+    if (mo !== month) { month = mo; html += `<h2>${esc(mo)}</h2>`; day = ''; }
+    if (p.publish_date !== day) { day = p.publish_date; html += `<div class="muted small" style="margin:14px 0 8px;font-weight:600">${esc(fmtDay(p.publish_date))}</div>`; }
+    const st = STATUS[p.status];
+    html += `
+      <div class="card post" data-id="${p.id}">
+        ${thumbHtml(p)}
+        <div style="min-width:0;flex:1">
+          <h3>${esc(titleOf(p, i))}</h3>
+          <span class="pill ${st.cls}" style="margin-top:6px">${st.label}</span>
+          <div class="meta">${esc(p.network)} · ${esc(p.format)}${p.media.length > 1 ? ` (${p.media.length})` : ''}</div>
+          <div class="excerpt">${esc(p.caption || '')}</div>
+        </div>
+      </div>`;
+  });
+  html += `<div class="foot">Un espai senzill per revisar i aprovar els teus continguts.</div>`;
+  app.innerHTML = html;
+  app.querySelectorAll('.post').forEach(el => el.onclick = () => { location.hash = 'p=' + el.dataset.id; });
+  window.scrollTo(0, 0);
+}
+
+function renderDetail(id, justDone) {
+  const i = data.posts.findIndex(p => p.id === id);
+  const p = data.posts[i];
+  if (!p) { location.hash = ''; return; }
+  const st = STATUS[p.status];
+  const slides = p.media.map(m => `<div class="slide">${m.kind === 'video'
+      ? `<video src="${mediaUrl(m.path)}" controls playsinline preload="metadata"></video>`
+      : `<img src="${mediaUrl(m.path)}" alt="">`}</div>`).join('');
+  const comments = p.comments.map(c => `<div class="bubble ${c.author}"><span class="who">${c.author === 'client' ? 'Tu' : 'Txell'} · ${esc(fmtStamp(c.created_at))}</span>${esc(c.body)}</div>`).join('');
+
+  let action = '';
+  if (justDone === 'aprovada') {
+    action = `<div class="notice ok"><b>Publicació aprovada!</b><p>Gràcies! Ja sabem que podem preparar aquesta publicació.</p></div>`;
+  } else if (justDone === 'canvis') {
+    action = `<div class="notice warn"><b>Canvis enviats</b><p>Gràcies! Revisarem els teus comentaris i t'avisarem quan estigui a punt.</p></div>`;
+  } else if (p.status === 'pendent' || location.hash.includes('edit')) {
+    action = `
+      <label for="cm">Vols afegir algun comentari?</label>
+      <textarea id="cm" placeholder="Escriu aquí si vols canviar alguna cosa…"></textarea>
+      <div class="error hidden" id="err"></div>
+      <div class="grid2" style="margin-top:12px">
+        <button class="btn-ok" id="bOk">✓ Aprovar</button>
+        <button class="btn-warn" id="bCh">✎ Demanar canvis</button>
+      </div>`;
+  } else {
+    action = `<div class="notice ${p.status === 'aprovada' ? 'ok' : 'warn'}"><b>${p.status === 'aprovada' ? 'Ja l\'has aprovada' : 'Has demanat canvis'}</b>
+      <p>${p.status === 'aprovada' ? 'Aquesta publicació està llesta.' : 'Estem treballant en els canvis.'}</p></div>
+      <button class="btn-ghost btn-sm" id="bRe" style="margin-top:6px">Vull tornar a revisar-la</button>`;
+  }
+
+  app.innerHTML = `
+    <button class="btn-ghost" id="back">← Tornar</button>
+    <div class="muted small" style="margin-top:6px">${esc(fmtDay(p.publish_date))}</div>
+    <div class="head" style="margin:4px 0 14px"><h1>${esc(titleOf(p, i))}</h1><span class="pill ${st.cls}">${st.label}</span></div>
+    <div class="muted small" style="margin-bottom:10px">${esc(p.network)} · ${esc(p.format)}</div>
+    ${slides ? `<div class="carousel" id="car">${slides}</div>${p.media.length > 1 ? `<div class="dots" id="dots">1 de ${p.media.length} · Llisca per veure-les totes</div>` : ''}` : ''}
+    <h2 style="margin-top:22px">Text de la publicació</h2>
+    <div class="card caption">${esc(p.caption || '—')}</div>
+    ${comments ? `<h2>Comentaris</h2>${comments}` : ''}
+    <h2>La teva revisió</h2>
+    ${action}
+    <div class="foot">Un espai senzill per revisar i aprovar els teus continguts.</div>`;
+  window.scrollTo(0, 0);
+
+  document.getElementById('back').onclick = () => { location.hash = ''; };
+  const car = document.getElementById('car'), dots = document.getElementById('dots');
+  if (car && dots) car.addEventListener('scroll', () => {
+    const n = Math.round(car.scrollLeft / car.clientWidth) + 1;
+    dots.textContent = `${n} de ${p.media.length}`;
+  }, { passive: true });
+  const bRe = document.getElementById('bRe');
+  if (bRe) bRe.onclick = () => { location.hash = 'p=' + p.id + '&edit'; };
+  const bOk = document.getElementById('bOk'), bCh = document.getElementById('bCh');
+  if (bOk) {
+    const cm = document.getElementById('cm'), err = document.getElementById('err');
+    cm.oninput = () => err.classList.add('hidden');
+    const send = async (status) => {
+      const text = cm.value.trim();
+      if (status === 'canvis' && !text) {
+        err.textContent = 'Explica breument què vols canviar.'; err.classList.remove('hidden'); cm.focus(); return;
+      }
+      bOk.disabled = bCh.disabled = true;
+      const { error } = await sb.rpc('portal_review', { p_token: token, p_post: p.id, p_status: status, p_comment: text });
+      if (error) {
+        err.textContent = 'No s\'ha pogut enviar. Torna-ho a provar.'; err.classList.remove('hidden');
+        bOk.disabled = bCh.disabled = false; return;
+      }
+      p.status = status;
+      if (text) p.comments.push({ author: 'client', body: text, created_at: new Date().toISOString() });
+      history.replaceState(null, '', '#p=' + p.id);
+      renderDetail(p.id, status);
+    };
+    bOk.onclick = () => send('aprovada');
+    bCh.onclick = () => send('canvis');
+  }
+}
+
+function route() {
+  if (!data) return;
+  const m = location.hash.match(/p=([0-9a-f-]+)/);
+  m ? renderDetail(m[1]) : renderList();
+}
+
+async function load() {
+  if (!token) { app.innerHTML = `<div class="center"><h1>Enllaç incomplet</h1><p class="muted">Obre l'enllaç tal com t'ha arribat per WhatsApp o correu.</p></div>`; return; }
+  const { data: d, error } = await sb.rpc('portal_get', { p_token: token });
+  if (error || !d) { app.innerHTML = `<div class="center"><h1>No hem trobat aquest espai</h1><p class="muted">Revisa l'enllaç o demana'n un de nou.</p></div>`; return; }
+  data = d;
+  route();
+}
+window.addEventListener('hashchange', route);
+load();
+</script>
+</body>
+</html>
