@@ -14,7 +14,7 @@
 
 <script type="module">
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
-import { SUPABASE_URL, SUPABASE_KEY, mediaUrl, esc, fmtDay, fmtMonth, fmtStamp, STATUS } from './config.js';
+import { SUPABASE_URL, SUPABASE_KEY, mediaUrl, audioUrl, esc, fmtDay, fmtMonth, fmtStamp, STATUS } from './config.js';
 
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: false } });
 const app = document.getElementById('app');
@@ -81,7 +81,7 @@ function renderDetail(id, justDone) {
   const slides = p.media.map(m => `<div class="slide">${m.kind === 'video'
       ? `<video src="${mediaUrl(m.path)}" controls playsinline preload="metadata"></video>`
       : `<img src="${mediaUrl(m.path)}" alt="">`}</div>`).join('');
-  const comments = p.comments.map(c => `<div class="bubble ${c.author}"><span class="who">${c.author === 'client' ? 'Tu' : 'Txell'} · ${esc(fmtStamp(c.created_at))}</span>${esc(c.body)}</div>`).join('');
+  const comments = p.comments.map(c => `<div class="bubble ${c.author}"><span class="who">${c.author === 'client' ? 'Tu' : 'Txell'} · ${esc(fmtStamp(c.created_at))}</span>${esc(c.body || '')}${c.audio_path ? `<audio controls preload="metadata" src="${audioUrl(c.audio_path)}"></audio>` : ''}</div>`).join('');
 
   let action = '';
   if (justDone === 'aprovada') {
@@ -92,6 +92,14 @@ function renderDetail(id, justDone) {
     action = `
       <label for="cm">Vols afegir algun comentari?</label>
       <textarea id="cm" placeholder="Escriu aquí si vols canviar alguna cosa…"></textarea>
+      <div class="rec">
+        <button type="button" class="btn-sm" id="recBtn">🎤 O grava un àudio</button>
+        <span class="muted small" id="recTime"></span>
+      </div>
+      <div class="row hidden" id="recBox" style="margin-top:8px;flex-wrap:nowrap">
+        <audio controls id="recPlay"></audio>
+        <button type="button" class="btn-ghost btn-sm" id="recDel">Esborrar</button>
+      </div>
       <div class="error hidden" id="err"></div>
       <div class="grid2" style="margin-top:12px">
         <button class="btn-ok" id="bOk">✓ Aprovar</button>
@@ -128,20 +136,76 @@ function renderDetail(id, justDone) {
   const bOk = document.getElementById('bOk'), bCh = document.getElementById('bCh');
   if (bOk) {
     const cm = document.getElementById('cm'), err = document.getElementById('err');
+    const showErr = (msg) => { err.textContent = msg; err.classList.remove('hidden'); };
     cm.oninput = () => err.classList.add('hidden');
-    const send = async (status) => {
-      const text = cm.value.trim();
-      if (status === 'canvis' && !text) {
-        err.textContent = 'Explica breument què vols canviar.'; err.classList.remove('hidden'); cm.focus(); return;
+
+    // Gravadora de veu
+    const recBtn = document.getElementById('recBtn'), recTime = document.getElementById('recTime'),
+          recBox = document.getElementById('recBox'), recPlay = document.getElementById('recPlay');
+    let rec = null, chunks = [], audioBlob = null, timer = null, secs = 0;
+    const MAX_SECS = 300;
+    const pickType = () => ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus']
+      .find(t => window.MediaRecorder && MediaRecorder.isTypeSupported(t)) || '';
+    const stopRec = () => { if (rec && rec.state === 'recording') rec.stop(); };
+    recBtn.onclick = async () => {
+      err.classList.add('hidden');
+      if (rec && rec.state === 'recording') { stopRec(); return; }
+      if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+        showErr('Aquest navegador no permet gravar àudio. Prova d\'obrir l\'enllaç amb Safari o Chrome.'); return;
       }
-      bOk.disabled = bCh.disabled = true;
-      const { error } = await sb.rpc('portal_review', { p_token: token, p_post: p.id, p_status: status, p_comment: text });
+      let stream;
+      try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+      catch { showErr('No s\'ha pogut fer servir el micròfon. Revisa que hagis donat permís al navegador.'); return; }
+      const type = pickType();
+      rec = type ? new MediaRecorder(stream, { mimeType: type }) : new MediaRecorder(stream);
+      chunks = []; secs = 0;
+      rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+      rec.onstop = () => {
+        clearInterval(timer); stream.getTracks().forEach(t => t.stop());
+        audioBlob = new Blob(chunks, { type: (rec.mimeType || type || 'audio/mp4').split(';')[0] });
+        recPlay.src = URL.createObjectURL(audioBlob);
+        recBox.classList.remove('hidden');
+        recBtn.textContent = '🎤 Tornar a gravar'; recBtn.classList.remove('btn-warn');
+        recTime.textContent = `Àudio de ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')} a punt per enviar`;
+      };
+      rec.start();
+      recBtn.textContent = '⏹ Aturar'; recBtn.classList.add('btn-warn');
+      recBox.classList.add('hidden'); audioBlob = null;
+      timer = setInterval(() => {
+        secs++; recTime.textContent = `Gravant… ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
+        if (secs >= MAX_SECS) stopRec();
+      }, 1000);
+      recTime.textContent = 'Gravant… 0:00';
+    };
+    document.getElementById('recDel').onclick = () => {
+      audioBlob = null; recBox.classList.add('hidden'); recPlay.removeAttribute('src');
+      recTime.textContent = ''; recBtn.textContent = '🎤 O grava un àudio';
+    };
+
+    const send = async (status) => {
+      if (rec && rec.state === 'recording') { showErr('Atura la gravació abans d\'enviar.'); return; }
+      const text = cm.value.trim();
+      if (status === 'canvis' && !text && !audioBlob) {
+        showErr('Explica breument què vols canviar, per escrit o amb un àudio.'); cm.focus(); return;
+      }
+      bOk.disabled = bCh.disabled = recBtn.disabled = true;
+      let audioPath = null;
+      if (audioBlob) {
+        const ext = audioBlob.type.includes('webm') ? 'webm' : audioBlob.type.includes('ogg') ? 'ogg' : 'm4a';
+        audioPath = `${token}/${p.id}/${Date.now()}.${ext}`;
+        const { error: upErr } = await sb.storage.from('audio').upload(audioPath, audioBlob, { contentType: audioBlob.type || 'audio/mp4' });
+        if (upErr) {
+          showErr('No s\'ha pogut enviar l\'àudio. Torna-ho a provar.');
+          bOk.disabled = bCh.disabled = recBtn.disabled = false; return;
+        }
+      }
+      const { error } = await sb.rpc('portal_review', { p_token: token, p_post: p.id, p_status: status, p_comment: text, p_audio: audioPath });
       if (error) {
-        err.textContent = 'No s\'ha pogut enviar. Torna-ho a provar.'; err.classList.remove('hidden');
-        bOk.disabled = bCh.disabled = false; return;
+        showErr('No s\'ha pogut enviar. Torna-ho a provar.');
+        bOk.disabled = bCh.disabled = recBtn.disabled = false; return;
       }
       p.status = status;
-      if (text) p.comments.push({ author: 'client', body: text, created_at: new Date().toISOString() });
+      if (text || audioPath) p.comments.push({ author: 'client', body: text, audio_path: audioPath, created_at: new Date().toISOString() });
       history.replaceState(null, '', '#p=' + p.id);
       renderDetail(p.id, status);
     };

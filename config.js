@@ -7,7 +7,10 @@ export const MAX_MB = 50;
 export const mediaUrl = (path) =>
   `${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${path.split('/').map(encodeURIComponent).join('/')}`;
 
-export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
+export const audioUrl = (path) =>
+  `${SUPABASE_URL}/storage/v1/object/public/audio/${path.split('/').map(encodeURIComponent).join('/')}`;
+
+export const esc =(s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 export const parseDate = (iso) => { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d); };

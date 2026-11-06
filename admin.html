@@ -91,7 +91,7 @@
 
 <script type="module">
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
-import { SUPABASE_URL, SUPABASE_KEY, BUCKET, MAX_MB, mediaUrl, esc, fmtDay, fmtStamp, STATUS } from './config.js';
+import { SUPABASE_URL, SUPABASE_KEY, BUCKET, MAX_MB, mediaUrl, audioUrl, esc, fmtDay, fmtStamp, STATUS } from './config.js';
 
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 const $ = (id) => document.getElementById(id);
@@ -175,6 +175,8 @@ function renderClientInfo() {
     if (!confirm(`Segur que vols esborrar "${c.name}" i totes les seves publicacions?`)) return;
     const { data: ms } = await sb.from('media').select('path, posts!inner(client_id)').eq('posts.client_id', c.id);
     if (ms?.length) await sb.storage.from(BUCKET).remove(ms.map(m => m.path));
+    const { data: as } = await sb.from('comments').select('audio_path, posts!inner(client_id)').eq('posts.client_id', c.id).not('audio_path', 'is', null);
+    if (as?.length) await sb.storage.from('audio').remove(as.map(a => a.audio_path));
     await sb.from('clients').delete().eq('id', c.id);
     localStorage.removeItem('aprov_client'); loadClients();
   };
@@ -185,7 +187,7 @@ async function loadPosts() {
   renderClientInfo();
   if (!clientId) { posts = []; renderPosts(); return; }
   const { data } = await sb.from('posts')
-    .select('*, media(id, path, kind, position), comments(id, author, body, created_at)')
+    .select('*, media(id, path, kind, position), comments(id, author, body, audio_path, created_at)')
     .eq('client_id', clientId).order('publish_date').order('created_at');
   posts = (data || []).map(p => ({ ...p,
     media: (p.media || []).sort((a, b) => a.position - b.position),
@@ -208,7 +210,7 @@ function renderPosts() {
     const th = !m ? '<div class="thumb"></div>' : `<div class="thumb">${m.kind === 'video'
       ? `<video src="${mediaUrl(m.path)}#t=0.5" preload="metadata" muted playsinline></video>`
       : `<img src="${mediaUrl(m.path)}" alt="" loading="lazy">`}${p.media.length > 1 ? `<span class="badge">${p.media.length}</span>` : ''}</div>`;
-    const cms = p.comments.map(c => `<div class="bubble ${c.author}"><span class="who">${c.author === 'client' ? 'Client' : 'Tu'} · ${esc(fmtStamp(c.created_at))}</span>${esc(c.body)}</div>`).join('');
+    const cms = p.comments.map(c => `<div class="bubble ${c.author}"><span class="who">${c.author === 'client' ? 'Client' : 'Tu'} · ${esc(fmtStamp(c.created_at))}</span>${esc(c.body || '')}${c.audio_path ? `<audio controls preload="metadata" src="${audioUrl(c.audio_path)}"></audio>` : ''}</div>`).join('');
     return `<div class="card admin-post">
       <div class="top">${th}
         <div style="min-width:0;flex:1">
@@ -247,6 +249,8 @@ function renderPosts() {
     const p = posts.find(x => x.id === b.dataset.del);
     if (!confirm('Segur que vols esborrar aquesta publicació i els seus fitxers?')) return;
     if (p.media.length) await sb.storage.from(BUCKET).remove(p.media.map(m => m.path));
+    const auds = p.comments.filter(c => c.audio_path).map(c => c.audio_path);
+    if (auds.length) await sb.storage.from('audio').remove(auds);
     await sb.from('posts').delete().eq('id', p.id);
     loadPosts();
   });

@@ -82,7 +82,10 @@ label { display: block; font-size: 13px; font-weight: 600; color: var(--muted); 
 .bubble.txell { background: var(--accent-soft); }
 .bubble .who { font-size: 12px; font-weight: 600; color: var(--muted); display: block; margin-bottom: 2px; white-space: normal; }
 
-.notice { border-radius: 14px; padding: 14px 16px; margin-top: 12px; }
+.bubble audio, #recPlay { width: 100%; max-width: 340px; height: 40px; display: block; margin-top: 6px; }
+.rec { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+
+.notice {border-radius: 14px; padding: 14px 16px; margin-top: 12px; }
 .notice.ok { background: var(--ok-bg); color: var(--ok); }
 .notice.warn { background: var(--warn-bg); color: var(--warn); }
 .notice p { margin: 2px 0 0; color: var(--text); font-size: 14px; }
