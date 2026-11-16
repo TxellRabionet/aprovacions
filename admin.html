@@ -95,7 +95,7 @@ import { SUPABASE_URL, SUPABASE_KEY, BUCKET, MAX_MB, mediaUrl, audioUrl, esc, fm
 
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 const $ = (id) => document.getElementById(id);
-let clients = [], clientId = null, posts = [], editing = null, newFiles = [], removeMedia = new Set(), signupMode = false;
+let clients = [], clientId = null, posts = [], editing = null, newFiles = [], removeMedia = new Set(), signupMode = false, showPublished = false;
 
 /* ---------- Login ---------- */
 $('lToggle').onclick = () => {
@@ -143,7 +143,7 @@ async function loadClients(selectId) {
   if (!clients.length) $('fClient').classList.remove('hidden');
   await loadPosts();
 }
-$('cSel').onchange = () => { clientId = $('cSel').value; localStorage.setItem('aprov_client', clientId); closeEditor(); loadPosts(); };
+$('cSel').onchange = () => { clientId = $('cSel').value; localStorage.setItem('aprov_client', clientId); showPublished = false; closeEditor(); loadPosts(); };
 $('cNewBtn').onclick = () => { $('fClient').classList.toggle('hidden'); $('cName').focus(); };
 $('fClient').onsubmit = async (e) => {
   e.preventDefault();
@@ -195,18 +195,39 @@ async function loadPosts() {
   renderPosts();
 }
 
+const slug = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-|-$/g, '').toLowerCase().slice(0, 40);
+const fileName = (p, m, i) => `${p.publish_date}-${slug(p.title) || 'publicacio'}-${i + 1}.${(m.path.split('.').pop() || 'jpg').toLowerCase()}`;
+const downloadUrl = (p, m, i) => `${mediaUrl(m.path)}?download=${encodeURIComponent(fileName(p, m, i))}`;
+function downloadAll(p) {
+  p.media.forEach((m, i) => setTimeout(() => {
+    const a = document.createElement('a');
+    a.href = downloadUrl(p, m, i); a.rel = 'noopener';
+    document.body.appendChild(a); a.click(); a.remove();
+  }, i * 700));
+}
+
 function renderPosts() {
-  const n = posts.length, pend = posts.filter(p => p.status === 'pendent').length,
-        ok = posts.filter(p => p.status === 'aprovada').length, ch = posts.filter(p => p.status === 'canvis').length;
+  const active = posts.filter(p => !p.published_at), published = posts.filter(p => p.published_at);
+  const n = active.length, pend = active.filter(p => p.status === 'pendent').length,
+        ok = active.filter(p => p.status === 'aprovada').length, ch = active.filter(p => p.status === 'canvis').length;
   $('stats').innerHTML = clientId ? `<div class="stats" style="grid-template-columns:repeat(4,1fr)">
-    <div class="stat"><b>${n}</b><span>Publicacions</span></div>
     <div class="stat"><b>${pend}</b><span>Pendents</span></div>
     <div class="stat"><b style="color:var(--warn)">${ch}</b><span>Amb canvis</span></div>
-    <div class="stat"><b style="color:var(--ok)">${ok}</b><span>Aprovades</span></div></div>` : '';
+    <div class="stat"><b style="color:var(--ok)">${ok}</b><span>Aprovades</span></div>
+    <div class="stat"><b style="color:var(--accent)">${published.length}</b><span>Publicades</span></div></div>` : '';
   if (!clientId) { $('posts').innerHTML = ''; return; }
-  if (!n) { $('posts').innerHTML = `<div class="card center muted">Encara no hi ha publicacions. Crea la primera amb «+ Nova publicació».</div>`; return; }
-  $('posts').innerHTML = posts.map((p, i) => {
-    const st = STATUS[p.status], m = p.media[0];
+  const list = showPublished ? [...published].sort((a, b) => b.published_at.localeCompare(a.published_at)) : active;
+  const toggle = published.length || showPublished
+    ? `<div class="row" style="justify-content:flex-end;margin-bottom:10px"><button class="btn-ghost btn-sm" id="togPub">${showPublished ? '← Tornar a les publicacions en curs' : `Veure les publicades (${published.length}) →`}</button></div>`
+    : '';
+  if (!list.length) {
+    $('posts').innerHTML = toggle + `<div class="card center muted">${showPublished ? 'Encara no hi ha cap publicació marcada com a publicada.' : (published.length ? 'Ho tens tot publicat! Crea una nova publicació amb «+ Nova publicació».' : 'Encara no hi ha publicacions. Crea la primera amb «+ Nova publicació».')}</div>`;
+    if ($('togPub')) $('togPub').onclick = () => { showPublished = !showPublished; renderPosts(); };
+    return;
+  }
+  $('posts').innerHTML = toggle + list.map((p) => {
+    const i = posts.indexOf(p);
+    const st = p.published_at ? { label: 'Publicada · ' + fmtStamp(p.published_at), cls: '' } : STATUS[p.status], m = p.media[0];
     const th = !m ? '<div class="thumb"></div>' : `<div class="thumb">${m.kind === 'video'
       ? `<video src="${mediaUrl(m.path)}#t=0.5" preload="metadata" muted playsinline></video>`
       : `<img src="${mediaUrl(m.path)}" alt="" loading="lazy">`}${p.media.length > 1 ? `<span class="badge">${p.media.length}</span>` : ''}</div>`;
@@ -225,14 +246,39 @@ function renderPosts() {
       <div class="row hidden" id="rep-${p.id}" style="margin-top:8px;flex-wrap:nowrap">
         <input placeholder="Respon al client…" id="repIn-${p.id}"><button class="btn-sm btn-primary" data-send="${p.id}">Enviar</button>
       </div>
+      ${p.media.length > 1 ? `<div class="row small" style="margin-top:10px;gap:6px">${p.media.map((mm, k) => `<a class="btn btn-sm" href="${esc(downloadUrl(p, mm, k))}" rel="noopener">⬇ ${mm.kind === 'video' ? 'Vídeo' : 'Imatge'} ${k + 1}</a>`).join('')}</div>` : ''}
       <div class="actions">
+        ${p.published_at
+          ? `<button class="btn-sm" data-unpub="${p.id}">Desfer «publicada»</button>`
+          : `<button class="btn-sm btn-primary" data-pub="${p.id}">✓ Marcar com a publicada</button>`}
+        ${p.media.length ? `<button class="btn-sm" data-dl="${p.id}">⬇ Descarregar ${p.media.length > 1 ? `tot (${p.media.length})` : (p.media[0].kind === 'video' ? 'vídeo' : 'imatge')}</button>` : ''}
+        ${p.caption ? `<button class="btn-sm" data-copy="${p.id}">Copiar text</button>` : ''}
         <button class="btn-sm" data-edit="${p.id}">Editar</button>
         <button class="btn-sm" data-reply="${p.id}">Respondre</button>
-        ${p.status !== 'pendent' ? `<button class="btn-sm" data-pend="${p.id}">Tornar a pendent</button>` : ''}
+        ${!p.published_at && p.status !== 'pendent' ? `<button class="btn-sm" data-pend="${p.id}">Tornar a pendent</button>` : ''}
         <button class="btn-sm btn-ghost btn-danger" data-del="${p.id}">Esborrar</button>
       </div>
     </div>`;
   }).join('');
+
+  if ($('togPub')) $('togPub').onclick = () => { showPublished = !showPublished; renderPosts(); window.scrollTo({ top: $('posts').offsetTop - 80, behavior: 'smooth' }); };
+  $('posts').querySelectorAll('[data-pub]').forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    const { error } = await sb.from('posts').update({ published_at: new Date().toISOString() }).eq('id', b.dataset.pub);
+    if (error) { b.disabled = false; alert('No s\'ha pogut marcar com a publicada.'); return; }
+    loadPosts();
+  });
+  $('posts').querySelectorAll('[data-unpub]').forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    await sb.from('posts').update({ published_at: null }).eq('id', b.dataset.unpub); loadPosts();
+  });
+  $('posts').querySelectorAll('[data-dl]').forEach(b => b.onclick = () => downloadAll(posts.find(p => p.id === b.dataset.dl)));
+  $('posts').querySelectorAll('[data-copy]').forEach(b => b.onclick = async () => {
+    const p = posts.find(x => x.id === b.dataset.copy);
+    try { await navigator.clipboard.writeText(p.caption); b.textContent = 'Copiat ✓'; }
+    catch { b.textContent = 'No s\'ha pogut copiar'; }
+    setTimeout(() => b.textContent = 'Copiar text', 1500);
+  });
 
   $('posts').querySelectorAll('[data-edit]').forEach(b => b.onclick = () => openEditor(posts.find(p => p.id === b.dataset.edit)));
   $('posts').querySelectorAll('[data-reply]').forEach(b => b.onclick = () => { $('rep-' + b.dataset.reply).classList.toggle('hidden'); $('repIn-' + b.dataset.reply).focus(); });

@@ -34,7 +34,8 @@ const thumbHtml = (p) => {
 const titleOf = (p, i) => p.title?.trim() || `Publicació ${String(i + 1).padStart(2, '0')}`;
 
 function renderList() {
-  const posts = data.posts;
+  const posts = data.posts.filter(p => !p.published_at);
+  const published = data.posts.filter(p => p.published_at);
   const pend = posts.filter(p => p.status === 'pendent').length;
   const ok = posts.filter(p => p.status === 'aprovada').length;
   let html = `
@@ -48,10 +49,11 @@ function renderList() {
       <div class="stat"><b style="color:var(--ok)">${ok}</b><span>Aprovades</span></div>
     </div>`;
   if (!posts.length) {
-    html += `<div class="card center muted" style="margin-top:20px">Encara no hi ha cap publicació per revisar.</div>`;
+    html += `<div class="card center muted" style="margin-top:20px">${published.length ? 'Ara mateix no tens res pendent. Gràcies!' : 'Encara no hi ha cap publicació per revisar.'}</div>`;
   }
   let month = '', day = '';
-  posts.forEach((p, i) => {
+  posts.forEach((p) => {
+    const i = data.posts.indexOf(p);
     const mo = fmtMonth(p.publish_date);
     if (mo !== month) { month = mo; html += `<h2>${esc(mo)}</h2>`; day = ''; }
     if (p.publish_date !== day) { day = p.publish_date; html += `<div class="muted small" style="margin:14px 0 8px;font-weight:600">${esc(fmtDay(p.publish_date))}</div>`; }
@@ -67,6 +69,18 @@ function renderList() {
         </div>
       </div>`;
   });
+  if (published.length) {
+    html += `<details class="published"><summary>Ja publicades (${published.length})</summary>` +
+      [...published].sort((a, b) => b.published_at.localeCompare(a.published_at)).map(p => `
+      <div class="card post" data-id="${p.id}">
+        ${thumbHtml(p)}
+        <div style="min-width:0;flex:1">
+          <h3>${esc(titleOf(p, data.posts.indexOf(p)))}</h3>
+          <span class="pill" style="margin-top:6px">Publicada</span>
+          <div class="meta">${esc(fmtDay(p.publish_date))} · ${esc(p.network)}</div>
+        </div>
+      </div>`).join('') + `</details>`;
+  }
   html += `<div class="foot">Un espai senzill per revisar i aprovar els teus continguts.</div>`;
   app.innerHTML = html;
   app.querySelectorAll('.post').forEach(el => el.onclick = () => { location.hash = 'p=' + el.dataset.id; });
@@ -77,14 +91,16 @@ function renderDetail(id, justDone) {
   const i = data.posts.findIndex(p => p.id === id);
   const p = data.posts[i];
   if (!p) { location.hash = ''; return; }
-  const st = STATUS[p.status];
+  const st = p.published_at ? { label: 'Publicada', cls: '' } : STATUS[p.status];
   const slides = p.media.map(m => `<div class="slide">${m.kind === 'video'
       ? `<video src="${mediaUrl(m.path)}" controls playsinline preload="metadata"></video>`
       : `<img src="${mediaUrl(m.path)}" alt="">`}</div>`).join('');
   const comments = p.comments.map(c => `<div class="bubble ${c.author}"><span class="who">${c.author === 'client' ? 'Tu' : 'Txell'} · ${esc(fmtStamp(c.created_at))}</span>${esc(c.body || '')}${c.audio_path ? `<audio controls preload="metadata" src="${audioUrl(c.audio_path)}"></audio>` : ''}</div>`).join('');
 
   let action = '';
-  if (justDone === 'aprovada') {
+  if (p.published_at) {
+    action = `<div class="notice ok"><b>Ja està publicada</b><p>Aquesta publicació ja és a les xarxes.</p></div>`;
+  } else if (justDone === 'aprovada') {
     action = `<div class="notice ok"><b>Publicació aprovada!</b><p>Gràcies! Ja sabem que podem preparar aquesta publicació.</p></div>`;
   } else if (justDone === 'canvis') {
     action = `<div class="notice warn"><b>Canvis enviats</b><p>Gràcies! Revisarem els teus comentaris i t'avisarem quan estigui a punt.</p></div>`;
